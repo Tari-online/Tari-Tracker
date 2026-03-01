@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>اختبار المساعد الصوتي - طري</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
+        .pulse { animation: pulse 1.5s infinite; }
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col h-[85vh]">
+        <div class="bg-red-600 text-white p-4 text-center">
+            <h1 class="text-2xl font-bold"><i class="fas fa-hamburger mr-2"></i> المساعد الصوتي - طري</h1>
+            <p class="text-sm opacity-80 mt-1">نسخة الاختبار للمطورين</p>
+        </div>
+
+        <div class="p-4 bg-gray-50 border-b text-sm">
+            <label class="block text-gray-700 mb-1 font-bold">رابط الـ Supabase Edge Function:</label>
+            <input type="text" id="apiUrl" class="w-full p-2 border rounded mb-3 text-left" dir="ltr" placeholder="https://....supabase.co/functions/v1/chat-tari">
+            
+            <label class="block text-gray-700 mb-1 font-bold">اختبار كـ (تغيير الـ Context):</label>
+            <select id="userContext" class="w-full p-2 border rounded">
+                <option value='{"name": "عميل جديد", "phone": "0500000000", "gender": "male"}'>عميل عام (ضيف)</option>
+                <option value='{"name": "هيثم", "phone": "0555555555", "gender": "male"}'>هيثم (المالك)</option>
+                <option value='{"name": "صابرين", "phone": "966566565258", "gender": "female"}'>صابرين (VIP)</option>
+            </select>
+        </div>
+
+        <div id="chatBox" class="flex-1 p-4 overflow-y-auto bg-gray-100 flex flex-col gap-3">
+            <div class="text-center text-gray-400 text-sm mt-10">
+                اضغط على المايكروفون وابدأ بالكلام...
+            </div>
+        </div>
+
+        <div class="p-6 bg-white border-t flex flex-col items-center justify-center">
+            <div id="statusText" class="text-sm text-gray-500 mb-4 h-5">جاهز للاستماع</div>
+            
+            <button id="micBtn" class="bg-red-500 hover:bg-red-600 text-white rounded-full w-20 h-20 flex items-center justify-center text-3xl shadow-lg transition-all">
+                <i class="fas fa-microphone"></i>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const micBtn = document.getElementById('micBtn');
+        const statusText = document.getElementById('statusText');
+        const chatBox = document.getElementById('chatBox');
+        const apiUrlInput = document.getElementById('apiUrl');
+        const userContextSelect = document.getElementById('userContext');
+
+        let isRecording = false;
+        let chatHistory = [];
+
+        // إعداد التعرف على الصوت
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'ar-SA';
+        recognition.interimResults = false;
+
+        // إعداد النطق الصوتي
+        const synth = window.speechSynthesis;
+
+        micBtn.addEventListener('click', () => {
+            if (isRecording) {
+                recognition.stop();
+            } else {
+                const url = apiUrlInput.value.trim();
+                if (!url) {
+                    alert('تكفى حط رابط الـ API حق Supabase أول شيء!');
+                    return;
+                }
+                recognition.start();
+            }
+        });
+
+        recognition.onstart = () => {
+            isRecording = true;
+            micBtn.classList.add('pulse', 'bg-red-700');
+            statusText.textContent = "جالس أسمعك...";
+        };
+
+        recognition.onend = () => {
+            isRecording = false;
+            micBtn.classList.remove('pulse', 'bg-red-700');
+            statusText.textContent = "جاهز للاستماع";
+        };
+
+        recognition.onresult = async (event) => {
+            const userText = event.results[0][0].transcript;
+            addMessage(userText, 'user');
+            
+            statusText.textContent = "جالس أفكر...";
+            await fetchAIResponse(userText);
+        };
+
+                async function fetchAIResponse(text) {
+            chatHistory.push({ role: 'user', text: text });
+            const contextData = JSON.parse(userContextSelect.value);
+
+            try {
+                const response = await fetch(apiUrlInput.value.trim(), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        history: chatHistory,
+                        context: contextData
+                    })
+                });
+
+                const data = await response.json();
+                console.log("🔍 الرد القادم من السيرفر:", data); // هذا بيكشف لنا المستور في الـ Console
+
+                if (!data.reply) {
+                    addMessage("السيرفر اشتغل بس ما رجع نص! (شيك الـ Console أو Logs السيرفر)", 'bot');
+                    statusText.textContent = "يوجد خطأ في إعدادات السيرفر";
+                    return;
+                }
+
+                const reply = data.reply;
+                chatHistory.push({ role: 'model', text: reply });
+                addMessage(reply, 'bot');
+                speakText(reply);
+                
+                statusText.textContent = "جاهز للاستماع";
+
+            } catch (error) {
+                console.error("❌ خطأ برمجي:", error);
+                addMessage("حدث خطأ في الاتصال بالسيرفر.", 'bot');
+                statusText.textContent = "خطأ في الاتصال";
+            }
+        }
+
+
+        function addMessage(text, sender) {
+            const div = document.createElement('div');
+            div.className = `max-w-[80%] p-3 rounded-xl ${sender === 'user' ? 'bg-blue-100 self-end rounded-br-none' : 'bg-white border self-start rounded-bl-none shadow-sm'}`;
+            div.textContent = text;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function speakText(text) {
+    if (!window.speechSynthesis) {
+        console.warn("متصفحك لا يدعم النطق الصوتي.");
+        return;
+    }
+
+    const synth = window.speechSynthesis;
+
+    if (synth.speaking) {
+        synth.cancel(); 
+    }
+    
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'ar-SA'; 
+    utterance.rate = 1.0; 
+    
+    // محاولة إجبار المتصفح على اختيار أفضل صوت عربي متاح (مثل أصوات جوجل)
+    const voices = synth.getVoices();
+    const bestArabicVoice = voices.find(v => v.lang.includes('ar') && v.name.includes('Google')) 
+                         || voices.find(v => v.lang.includes('ar'));
+                         
+    if (bestArabicVoice) {
+        utterance.voice = bestArabicVoice;
+    }
+    
+    synth.speak(utterance);
+}
+
+// تحميل الأصوات في الخلفية عشان تكون جاهزة
+window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
+
+    </script>
+</body>
+</html>
